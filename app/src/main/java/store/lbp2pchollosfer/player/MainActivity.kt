@@ -61,6 +61,9 @@ class MainActivity : AppCompatActivity() {
     private var loadToken = 0
     private var playToken = 0
     private var attempt = 0
+    private var inSeries = false
+    private var prevGroup: String? = null
+    private var baseTitle = ""
 
     private val hideOverlay = Runnable { overlay.visibility = View.GONE }
 
@@ -88,6 +91,7 @@ class MainActivity : AppCompatActivity() {
 
         catAdapter = CatAdapter { item ->
             search.setText("")
+            inSeries = false
             currentGroup = item.group
             loadChannels(item.group, null, 30)
         }
@@ -121,6 +125,10 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 if (playerLayer.visibility == View.VISIBLE) {
                     closePlayer()
+                } else if (inSeries) {
+                    inSeries = false
+                    currentGroup = prevGroup
+                    loadChannels(prevGroup, null, 30)
                 } else {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
@@ -307,7 +315,9 @@ class MainActivity : AppCompatActivity() {
                         playerMsg.visibility = View.GONE
                     }
                     Player.STATE_BUFFERING -> showMsg("Cargando…")
-                    Player.STATE_ENDED -> retry()
+                    Player.STATE_ENDED -> if (isVod()) {
+                        if (inSeries && currentIndex + 1 < channels.size) play(currentIndex + 1) else closePlayer()
+                    } else retry()
                     else -> {}
                 }
             }
@@ -323,6 +333,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun play(index: Int) {
         if (index !in channels.indices) return
+        val u = channels[index].url
+        if (u.startsWith("vod://series/")) {
+            prevGroup = currentGroup
+            inSeries = true
+            val g = "series:" + u.removePrefix("vod://series/")
+            currentGroup = g
+            loadChannels(g, null, 30)
+            return
+        }
         currentIndex = index
         attempt = 0
         playToken++
@@ -336,6 +355,7 @@ class MainActivity : AppCompatActivity() {
             info += "\n▶ " + chn.nowTitle
             if (chn.nextTitle != null) info += "   ·   Después: " + chn.nextTitle
         }
+        baseTitle = info
         playerTitle.text = info
         showOverlay()
         startPlayback()
@@ -344,11 +364,11 @@ class MainActivity : AppCompatActivity() {
     private fun startPlayback() {
         val ch = channels.getOrNull(currentIndex) ?: return
         val p = player ?: createPlayer()
-        val asHls = attempt % 2 == 1
-        val item = MediaItem.Builder()
-            .setUri(ch.url)
-            .setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
-            .build()
+        val vod = isVod()
+        val asHls = !vod && attempt % 2 == 1
+        val mb = MediaItem.Builder().setUri(ch.url)
+        if (!vod) mb.setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
+        val item = mb.build()
         p.setMediaItem(item)
         p.prepare()
         p.playWhenReady = true
@@ -388,7 +408,33 @@ class MainActivity : AppCompatActivity() {
         channelsView.requestFocus()
     }
 
+    private fun isVod(): Boolean {
+        val u = channels.getOrNull(currentIndex)?.url ?: return false
+        return u.contains("/Videos/") && u.contains("static=true")
+    }
+
+    private fun fmt(ms: Long): String {
+        val s = ms / 1000
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, sec) else String.format("%d:%02d", m, sec)
+    }
+
+    private fun seekBy(ms: Long) {
+        val p = player ?: return
+        val target = (p.currentPosition + ms).coerceAtLeast(0L)
+        val d = p.duration
+        p.seekTo(if (d > 0) target.coerceAtMost(d - 1000) else target)
+        showOverlay()
+    }
+
     private fun showOverlay() {
+        val pl = player
+        if (isVod() && pl != null) {
+            val d = pl.duration
+            playerTitle.text = baseTitle + "\n" + fmt(pl.currentPosition) + (if (d > 0) " / " + fmt(d) else "") + (if (!pl.playWhenReady) "   (pausa)" else "")
+        }
         overlay.visibility = View.VISIBLE
         ui.removeCallbacks(hideOverlay)
         ui.postDelayed(hideOverlay, 3500)
@@ -415,6 +461,49 @@ class MainActivity : AppCompatActivity() {
             if (kc == KeyEvent.KEYCODE_DEL) {
                 pressKey("⌫")
                 return true
+            }
+        }
+        if (playerLayer.visibility == View.VISIBLE && event.action == KeyEvent.ACTION_DOWN && isVod()) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                    seekBy(-15000)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                    seekBy(15000)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    seekBy(60000)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    seekBy(-60000)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                    player?.let { it.playWhenReady = !it.playWhenReady }
+                    showOverlay()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                    player?.playWhenReady = true
+                    showOverlay()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    player?.playWhenReady = false
+                    showOverlay()
+                    return true
+                }
+                KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                    zap(1)
+                    return true
+                }
+                KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                    zap(-1)
+                    return true
+                }
             }
         }
         if (playerLayer.visibility == View.VISIBLE && event.action == KeyEvent.ACTION_DOWN) {
