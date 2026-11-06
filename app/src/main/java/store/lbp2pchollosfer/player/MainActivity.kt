@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private var loadToken = 0
     private var playToken = 0
     private var attempt = 0
+    private var checking = false
     private var inSeries = false
     private var prevGroup: String? = null
     private var baseTitle = ""
@@ -106,7 +107,8 @@ class MainActivity : AppCompatActivity() {
             if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
                 val q = v.text.toString().trim()
                 hideKeyboard()
-                if (q.length >= 2) loadChannels(null, q, 4)
+                if (q == "#probar") runHealthCheck()
+                else if (q.length >= 2) loadChannels(null, q, 4)
                 else if (q.isEmpty()) loadChannels(currentGroup, null, 30)
                 true
             } else false
@@ -406,6 +408,84 @@ class MainActivity : AppCompatActivity() {
         browser.visibility = View.VISIBLE
         channelsView.scrollToPosition(currentIndex.coerceAtLeast(0))
         channelsView.requestFocus()
+    }
+
+    /** Prueba cada canal de la categoría abierta, como lo haría el reproductor, y avisa al panel */
+    private fun probeStream(url: String): Boolean {
+        var c: java.net.HttpURLConnection? = null
+        try {
+            c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 4000
+            c.readTimeout = 6000
+            c.instanceFollowRedirects = true
+            c.setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+            if (c.responseCode !in 200..299) return false
+            val buf = ByteArray(2048)
+            var got = 0
+            val ins = c.inputStream
+            while (got < 1200) {
+                val r = ins.read(buf, got, buf.size - got)
+                if (r <= 0) break
+                got += r
+            }
+            if (got < 400) return false
+            val first = buf[0].toInt() and 0xff
+            return first == 0x47 || first == 0x23
+        } catch (e: Exception) {
+            return false
+        } finally {
+            try { c?.disconnect() } catch (e: Exception) {}
+        }
+    }
+
+    private fun runHealthCheck() {
+        if (checking) return
+        val list = channels.filter { !it.id.startsWith("vod-") }
+        if (list.isEmpty()) {
+            status.text = "Abre primero una categoría de canales"
+            return
+        }
+        checking = true
+        val group = currentGroup
+        val total = list.size
+        val done = java.util.concurrent.atomic.AtomicInteger(0)
+        val good = java.util.concurrent.atomic.AtomicInteger(0)
+        val failedReport = java.util.concurrent.atomic.AtomicInteger(0)
+        val results = java.util.Collections.synchronizedList(ArrayList<Triple<String, Boolean, Int>>())
+        status.text = "Comprobando 0/" + total + "…"
+        Thread {
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
+            for (ch in list) {
+                pool.execute {
+                    val t0 = System.currentTimeMillis()
+                    val ok = probeStream(ch.url)
+                    val ms = (System.currentTimeMillis() - t0).toInt()
+                    if (ok) good.incrementAndGet()
+                    results.add(Triple(ch.id, ok, ms))
+                    val n = done.incrementAndGet()
+                    if (n % 20 == 0 || n == total) {
+                        val batch = ArrayList<Triple<String, Boolean, Int>>()
+                        synchronized(results) {
+                            batch.addAll(results)
+                            results.clear()
+                        }
+                        if (batch.isNotEmpty() && !Api.reportHealth(batch)) failedReport.incrementAndGet()
+                        ui.post { status.text = "Comprobando " + n + "/" + total + " · funcionan " + good.get() }
+                    }
+                }
+            }
+            pool.shutdown()
+            pool.awaitTermination(3, java.util.concurrent.TimeUnit.HOURS)
+            ui.post {
+                checking = false
+                if (failedReport.get() > 0) {
+                    status.text = "No se pudo guardar el resultado (solo el administrador puede comprobar)"
+                } else {
+                    status.text = "Listo: funcionan " + good.get() + " de " + total
+                    loadChannels(group, null, 30)
+                }
+            }
+        }.start()
     }
 
     private fun isVod(): Boolean {

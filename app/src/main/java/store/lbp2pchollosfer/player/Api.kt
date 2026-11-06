@@ -141,4 +141,28 @@ object Api {
         }
         return out
     }
+
+    /** Envía al panel qué canales han reproducido (solo lo acepta el administrador) */
+    fun reportHealth(batch: List<Triple<String, Boolean, Int>>): Boolean {
+        return try {
+            val conn = URL(BASE + "/app-api/health/report").openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("Content-Type", "application/json")
+            token?.let { conn.setRequestProperty("Authorization", "Bearer " + it) }
+            val arr = org.json.JSONArray()
+            for (t in batch) {
+                arr.put(org.json.JSONObject().put("id", t.first).put("ok", t.second).put("ms", t.third))
+            }
+            val body = org.json.JSONObject().put("results", arr).toString()
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (e: Exception) {
+            false
+        }
+    }
 }
