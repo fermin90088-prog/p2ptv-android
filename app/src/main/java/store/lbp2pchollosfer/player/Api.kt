@@ -1,15 +1,24 @@
 package store.lbp2pchollosfer.player
 
 import org.json.JSONArray
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 data class Channel(
     val id: String,
     val name: String,
     val group: String,
     val url: String,
+    val logo: String,
+    val nowTitle: String?,
+    val nowStartMs: Long,
+    val nowEndMs: Long,
+    val nextTitle: String?,
 )
 
 data class CatItem(
@@ -38,6 +47,20 @@ object Api {
 
     private fun cleanTitle(raw: String): String =
         raw.replace(Regex("^(ES|ESP|EU)\\s*[|:\\-]+\\s*"), "").trim().ifEmpty { raw }
+
+    private fun str(o: JSONObject, key: String): String? =
+        if (o.isNull(key)) null else o.optString(key, "").ifEmpty { null }
+
+    private fun ms(s: String?): Long {
+        if (s == null || s.length < 19) return 0L
+        return try {
+            val f = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+            f.timeZone = TimeZone.getTimeZone("UTC")
+            f.parse(s.replace(' ', 'T').substring(0, 19))?.time ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
+    }
 
     fun categories(): List<CatItem> {
         val arr = JSONArray(get("/app-api/m3u/groups"))
@@ -70,12 +93,19 @@ object Api {
             val o = arr.getJSONObject(i)
             val url = o.optString("stream_url", "")
             if (url.isEmpty()) continue
+            var logo = str(o, "logo") ?: ""
+            if (logo.startsWith("/")) logo = BASE + logo
             out.add(
                 Channel(
                     id = o.optString("id", ""),
                     name = o.optString("name", "Canal"),
                     group = cleanTitle(o.optString("group_title", "")),
                     url = url,
+                    logo = logo,
+                    nowTitle = str(o, "now_title"),
+                    nowStartMs = ms(str(o, "now_start")),
+                    nowEndMs = ms(str(o, "now_end")),
+                    nextTitle = str(o, "next_title"),
                 )
             )
         }
