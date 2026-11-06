@@ -23,6 +23,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -56,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chAdapter: ChAdapter
 
     private var player: ExoPlayer? = null
+    private var lastError: String = ""
     private var currentIndex = -1
     private var currentGroup: String? = null
     private var loadToken = 0
@@ -291,14 +294,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun describe(e: PlaybackException): String {
+        val c: Throwable? = e.cause
+        if (c is HttpDataSource.InvalidResponseCodeException) {
+            return "HTTP " + c.responseCode + " en " + (c.dataSpec.uri.host ?: "?")
+        }
+        if (c is HttpDataSource.HttpDataSourceException) {
+            val inner = c.cause
+            return "Red: " + (inner?.javaClass?.simpleName ?: c.javaClass.simpleName) + " " + (inner?.message ?: c.message ?: "")
+        }
+        return e.errorCodeName + (c?.message?.let { ": " + it.take(80) } ?: "")
+    }
+
     private fun createPlayer(): ExoPlayer {
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(10000)
-            .setReadTimeoutMs(15000)
+            .setConnectTimeoutMs(6000)
+            .setReadTimeoutMs(8000)
         val sourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
-        val p = ExoPlayer.Builder(this).setMediaSourceFactory(sourceFactory).build()
+        val lc = DefaultLoadControl.Builder().setBufferDurationsMs(4000, 30000, 700, 1500).build()
+        val p = ExoPlayer.Builder(this).setMediaSourceFactory(sourceFactory).setLoadControl(lc).build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
@@ -313,6 +329,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                lastError = describe(error)
                 retry()
             }
         })
@@ -359,12 +376,12 @@ class MainActivity : AppCompatActivity() {
         attempt++
         val token = playToken
         if (attempt <= 5) {
-            showMsg("Reconectando…")
+            showMsg("Reconectando… " + attempt + "/5\n" + lastError)
             ui.postDelayed({
                 if (token == playToken && playerLayer.visibility == View.VISIBLE) startPlayback()
-            }, 1200)
+            }, 500)
         } else {
-            showMsg("Canal no disponible.\nPulsa arriba o abajo para cambiar de canal.")
+            showMsg("Canal no disponible (" + lastError + ").\nPulsa arriba o abajo para cambiar de canal.")
         }
     }
 
