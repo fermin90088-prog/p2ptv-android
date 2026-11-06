@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
     private var lastError: String = ""
+    private var diagToken: Int = -1
     private var currentIndex = -1
     private var currentGroup: String? = null
     private var loadToken = 0
@@ -294,6 +295,53 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Cuando un canal falla, la app prueba ella misma el enlace y se lo cuenta al panel */
+    private fun sendDiag(url: String, name: String, err: String) {
+        Thread {
+            val sb = StringBuilder()
+            sb.append("error=").append(err).append("\n")
+            try {
+                val c1 = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                c1.instanceFollowRedirects = false
+                c1.connectTimeout = 6000
+                c1.readTimeout = 8000
+                c1.setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+                val code1 = c1.responseCode
+                val loc = c1.getHeaderField("Location")
+                sb.append("paso1=").append(code1).append(" destino=").append(loc?.take(70)).append("\n")
+                c1.disconnect()
+                if (loc != null) {
+                    val c2 = java.net.URL(loc).openConnection() as java.net.HttpURLConnection
+                    c2.instanceFollowRedirects = false
+                    c2.connectTimeout = 6000
+                    c2.readTimeout = 8000
+                    c2.setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+                    val code2 = c2.responseCode
+                    var first = -1
+                    try { first = c2.inputStream.read() } catch (e: Exception) { sb.append("lectura=").append(e.javaClass.simpleName).append(" ") }
+                    sb.append("paso2=").append(code2).append(" tipo=").append(c2.contentType).append(" primerByte=").append(first)
+                    c2.disconnect()
+                }
+            } catch (e: Exception) {
+                sb.append("fallo=").append(e.javaClass.simpleName).append(" ").append(e.message?.take(100))
+            }
+            try {
+                val c = java.net.URL(Api.BASE + "/app-api/diag").openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "POST"
+                c.doOutput = true
+                c.connectTimeout = 8000
+                c.readTimeout = 8000
+                c.setRequestProperty("Content-Type", "application/json")
+                Api.token?.let { c.setRequestProperty("Authorization", "Bearer " + it) }
+                val body = org.json.JSONObject().put("channel", name).put("text", sb.toString()).toString()
+                c.outputStream.use { it.write(body.toByteArray()) }
+                c.responseCode
+                c.disconnect()
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
     private fun describe(e: PlaybackException): String {
         val c: Throwable? = e.cause
         if (c is HttpDataSource.InvalidResponseCodeException) {
@@ -375,6 +423,10 @@ class MainActivity : AppCompatActivity() {
         if (playerLayer.visibility != View.VISIBLE) return
         attempt++
         val token = playToken
+        if (attempt == 2 && diagToken != token) {
+            diagToken = token
+            channels.getOrNull(currentIndex)?.let { sendDiag(it.url, it.name, lastError) }
+        }
         if (attempt <= 5) {
             showMsg("Reconectando… " + attempt + "/5\n" + lastError)
             ui.postDelayed({
