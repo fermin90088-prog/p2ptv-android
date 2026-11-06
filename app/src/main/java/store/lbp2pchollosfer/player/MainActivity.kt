@@ -440,21 +440,44 @@ class MainActivity : AppCompatActivity() {
 
     private fun runHealthCheck() {
         if (checking) return
-        val list = channels.filter { !it.id.startsWith("vod-") }
-        if (list.isEmpty()) {
-            status.text = "Abre primero una categoría de canales"
+        val cats = catAdapter.items.filter {
+            val g = it.group
+            !it.header && g != null && g != "ADULTOS" && !g.startsWith("CINE ·") && !g.startsWith("SERIES ·")
+        }
+        if (cats.isEmpty()) {
+            status.text = "Espera a que carguen las categorías"
             return
         }
         checking = true
         val group = currentGroup
-        val total = list.size
-        val done = java.util.concurrent.atomic.AtomicInteger(0)
-        val good = java.util.concurrent.atomic.AtomicInteger(0)
-        val failedReport = java.util.concurrent.atomic.AtomicInteger(0)
-        val results = java.util.Collections.synchronizedList(ArrayList<Triple<String, Boolean, Int>>())
-        status.text = "Comprobando 0/" + total + "…"
+        status.text = "Preparando la comprobación…"
         Thread {
-            val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
+            val seen = HashSet<String>()
+            val list = ArrayList<Channel>()
+            try {
+                for (cat in cats) {
+                    var page = 1
+                    while (true) {
+                        val batch = Api.channels(cat.group, null, page)
+                        for (c in batch) if (!c.id.startsWith("vod-") && seen.add(c.id)) list.add(c)
+                        if (batch.size < Api.PAGE_SIZE) break
+                        page++
+                    }
+                }
+            } catch (e: Exception) {
+                ui.post {
+                    checking = false
+                    status.text = "No se pudo preparar la comprobación"
+                }
+                return@Thread
+            }
+            val total = list.size
+            val done = java.util.concurrent.atomic.AtomicInteger(0)
+            val good = java.util.concurrent.atomic.AtomicInteger(0)
+            val failedReport = java.util.concurrent.atomic.AtomicInteger(0)
+            val results = java.util.Collections.synchronizedList(ArrayList<Triple<String, Boolean, Int>>())
+            ui.post { status.text = "Comprobando 0/" + total + "…" }
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
             for (ch in list) {
                 pool.execute {
                     val t0 = System.currentTimeMillis()
@@ -463,7 +486,7 @@ class MainActivity : AppCompatActivity() {
                     if (ok) good.incrementAndGet()
                     results.add(Triple(ch.id, ok, ms))
                     val n = done.incrementAndGet()
-                    if (n % 20 == 0 || n == total) {
+                    if (n % 25 == 0 || n == total) {
                         val batch = ArrayList<Triple<String, Boolean, Int>>()
                         synchronized(results) {
                             batch.addAll(results)
