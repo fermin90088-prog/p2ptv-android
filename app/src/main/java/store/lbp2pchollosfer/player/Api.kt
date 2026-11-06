@@ -32,12 +32,42 @@ object Api {
     const val BASE = "https://tv.lbp2pchollosfer.store"
     const val PAGE_SIZE = 60
 
+    /** Sesión del cliente (se guarda en el aparato tras entrar con el PIN) */
+    @Volatile
+    var token: String? = null
+
+    class Unauthorized : RuntimeException("login")
+
+    /** Devuelve (sesión, "") si el PIN vale, o (null, mensaje de error) */
+    fun login(pin: String): Pair<String?, String> {
+        val conn = URL(BASE + "/app-api/auth/pin-login").openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.connectTimeout = 10000
+        conn.readTimeout = 15000
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("User-Agent", "P2PTV-Android")
+        try {
+            conn.outputStream.use { it.write(("{\"pin\":\"" + pin + "\"}").toByteArray()) }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            val o = JSONObject(text)
+            return if (o.optBoolean("ok")) Pair(o.optString("token"), "")
+            else Pair(null, o.optString("error", "No se pudo entrar"))
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     private fun get(path: String): String {
         val conn = URL(BASE + path).openConnection() as HttpURLConnection
         conn.connectTimeout = 10000
         conn.readTimeout = 25000
         conn.setRequestProperty("User-Agent", "P2PTV-Android")
+        token?.let { conn.setRequestProperty("Authorization", "Bearer " + it) }
         try {
+            if (conn.responseCode == 401) throw Unauthorized()
             if (conn.responseCode !in 200..299) throw RuntimeException("HTTP ${conn.responseCode}")
             return conn.inputStream.bufferedReader().use { it.readText() }
         } finally {
