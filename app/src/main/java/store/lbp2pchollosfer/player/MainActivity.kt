@@ -45,6 +45,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlay: LinearLayout
     private lateinit var playerTitle: TextView
     private lateinit var playerMsg: TextView
+    private lateinit var loginLayer: LinearLayout
+    private lateinit var pinDots: TextView
+    private lateinit var loginMsg: TextView
+    private lateinit var keypad: LinearLayout
+    private var pin = ""
 
     private val channels = ArrayList<Channel>()
     private lateinit var catAdapter: CatAdapter
@@ -73,6 +78,13 @@ class MainActivity : AppCompatActivity() {
         overlay = findViewById(R.id.overlay)
         playerTitle = findViewById(R.id.playerTitle)
         playerMsg = findViewById(R.id.playerMsg)
+        loginLayer = findViewById(R.id.loginLayer)
+        pinDots = findViewById(R.id.pinDots)
+        loginMsg = findViewById(R.id.loginMsg)
+        keypad = findViewById(R.id.keypad)
+        setupKeypad()
+        Api.token = getSharedPreferences("p2ptv", Context.MODE_PRIVATE).getString("token", null)
+        findViewById<View>(R.id.btnLogout).setOnClickListener { showLogin() }
 
         catAdapter = CatAdapter { item ->
             search.setText("")
@@ -116,7 +128,110 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        loadCategories()
+        if (Api.token == null) showLogin() else loadCategories()
+    }
+
+    // ── Acceso con PIN ──────────────────────────────────────────────────────
+
+    private fun showLogin(message: String = "") {
+        Api.token = null
+        getSharedPreferences("p2ptv", Context.MODE_PRIVATE).edit().remove("token").apply()
+        playToken++
+        player?.release()
+        player = null
+        playerView.player = null
+        playerLayer.visibility = View.GONE
+        browser.visibility = View.GONE
+        loginLayer.visibility = View.VISIBLE
+        pin = ""
+        updatePinDots()
+        loginMsg.text = message
+        (keypad.getChildAt(0) as? LinearLayout)?.getChildAt(0)?.requestFocus()
+    }
+
+    private fun updatePinDots() {
+        pinDots.text = (0 until 6).joinToString(" ") { if (it < pin.length) "●" else "○" }
+    }
+
+    private fun setupKeypad() {
+        val keys = listOf(
+            listOf("1", "2", "3"),
+            listOf("4", "5", "6"),
+            listOf("7", "8", "9"),
+            listOf("⌫", "0", "OK"),
+        )
+        val density = resources.displayMetrics.density
+        val size = (density * 64).toInt()
+        val margin = (density * 4).toInt()
+        for (row in keys) {
+            val line = LinearLayout(this)
+            line.orientation = LinearLayout.HORIZONTAL
+            line.gravity = android.view.Gravity.CENTER
+            for (k in row) {
+                val tv = TextView(this)
+                tv.text = k
+                tv.textSize = if (k.length == 1 && k[0].isDigit()) 24f else 18f
+                tv.gravity = android.view.Gravity.CENTER
+                tv.setTextColor(
+                    androidx.core.content.ContextCompat.getColor(
+                        this,
+                        if (k == "OK") R.color.accent else R.color.text,
+                    )
+                )
+                tv.setBackgroundResource(R.drawable.bg_item)
+                tv.isFocusable = true
+                tv.isClickable = true
+                tv.setOnClickListener { pressKey(k) }
+                val lp = LinearLayout.LayoutParams(size, size)
+                lp.setMargins(margin, margin, margin, margin)
+                line.addView(tv, lp)
+            }
+            keypad.addView(line)
+        }
+    }
+
+    private fun pressKey(k: String) {
+        when (k) {
+            "⌫" -> if (pin.isNotEmpty()) pin = pin.dropLast(1)
+            "OK" -> {
+                doLogin()
+                return
+            }
+            else -> if (pin.length < 6) pin += k
+        }
+        loginMsg.text = ""
+        updatePinDots()
+        if (pin.length == 6 && k != "⌫") doLogin()
+    }
+
+    private fun doLogin() {
+        if (pin.length != 6) {
+            loginMsg.text = "Introduce los 6 dígitos"
+            return
+        }
+        val entered = pin
+        loginMsg.text = "Comprobando…"
+        io.execute {
+            val result = try {
+                Api.login(entered)
+            } catch (e: Exception) {
+                Pair<String?, String>(null, "No se pudo conectar")
+            }
+            ui.post {
+                val token = result.first
+                if (token != null) {
+                    Api.token = token
+                    getSharedPreferences("p2ptv", Context.MODE_PRIVATE).edit().putString("token", token).apply()
+                    loginLayer.visibility = View.GONE
+                    browser.visibility = View.VISIBLE
+                    loadCategories()
+                } else {
+                    pin = ""
+                    updatePinDots()
+                    loginMsg.text = result.second
+                }
+            }
+        }
     }
 
     private fun loadCategories() {
@@ -137,6 +252,8 @@ class MainActivity : AppCompatActivity() {
                         status.text = "No hay canales."
                     }
                 }
+            } catch (e: Api.Unauthorized) {
+                ui.post { showLogin("Tu sesión ha caducado. Introduce tu PIN.") }
             } catch (e: Exception) {
                 ui.post { status.text = "No se pudo conectar. Toca aquí para reintentar." }
             }
@@ -166,6 +283,8 @@ class MainActivity : AppCompatActivity() {
                     page++
                 }
                 ui.post { if (token == loadToken && channels.isEmpty()) status.text = "Sin resultados" }
+            } catch (e: Api.Unauthorized) {
+                ui.post { showLogin("Tu sesión ha caducado. Introduce tu PIN.") }
             } catch (e: Exception) {
                 ui.post { if (token == loadToken) status.text = "No se pudieron cargar los canales." }
             }
@@ -287,6 +406,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (loginLayer.visibility == View.VISIBLE && event.action == KeyEvent.ACTION_DOWN) {
+            val kc = event.keyCode
+            if (kc >= KeyEvent.KEYCODE_0 && kc <= KeyEvent.KEYCODE_9) {
+                pressKey((kc - KeyEvent.KEYCODE_0).toString())
+                return true
+            }
+            if (kc == KeyEvent.KEYCODE_DEL) {
+                pressKey("⌫")
+                return true
+            }
+        }
         if (playerLayer.visibility == View.VISIBLE && event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP,
