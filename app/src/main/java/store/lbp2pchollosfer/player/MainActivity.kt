@@ -23,8 +23,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -58,8 +56,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chAdapter: ChAdapter
 
     private var player: ExoPlayer? = null
-    private var lastError: String = ""
-    private var diagToken: Int = -1
     private var currentIndex = -1
     private var currentGroup: String? = null
     private var loadToken = 0
@@ -295,74 +291,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Cuando un canal falla, la app prueba ella misma el enlace y se lo cuenta al panel */
-    private fun sendDiag(url: String, name: String, err: String) {
-        Thread {
-            val sb = StringBuilder()
-            sb.append("error=").append(err).append("\n")
-            try {
-                val c1 = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                c1.instanceFollowRedirects = false
-                c1.connectTimeout = 6000
-                c1.readTimeout = 8000
-                c1.setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
-                val code1 = c1.responseCode
-                val loc = c1.getHeaderField("Location")
-                sb.append("paso1=").append(code1).append(" destino=").append(loc?.take(70)).append("\n")
-                c1.disconnect()
-                if (loc != null) {
-                    val c2 = java.net.URL(loc).openConnection() as java.net.HttpURLConnection
-                    c2.instanceFollowRedirects = false
-                    c2.connectTimeout = 6000
-                    c2.readTimeout = 8000
-                    c2.setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
-                    val code2 = c2.responseCode
-                    var first = -1
-                    try { first = c2.inputStream.read() } catch (e: Exception) { sb.append("lectura=").append(e.javaClass.simpleName).append(" ") }
-                    sb.append("paso2=").append(code2).append(" tipo=").append(c2.contentType).append(" primerByte=").append(first)
-                    c2.disconnect()
-                }
-            } catch (e: Exception) {
-                sb.append("fallo=").append(e.javaClass.simpleName).append(" ").append(e.message?.take(100))
-            }
-            try {
-                val c = java.net.URL(Api.BASE + "/app-api/diag").openConnection() as java.net.HttpURLConnection
-                c.requestMethod = "POST"
-                c.doOutput = true
-                c.connectTimeout = 8000
-                c.readTimeout = 8000
-                c.setRequestProperty("Content-Type", "application/json")
-                Api.token?.let { c.setRequestProperty("Authorization", "Bearer " + it) }
-                val body = org.json.JSONObject().put("channel", name).put("text", sb.toString()).toString()
-                c.outputStream.use { it.write(body.toByteArray()) }
-                c.responseCode
-                c.disconnect()
-            } catch (e: Exception) {
-            }
-        }.start()
-    }
-
-    private fun describe(e: PlaybackException): String {
-        val c: Throwable? = e.cause
-        if (c is HttpDataSource.InvalidResponseCodeException) {
-            return "HTTP " + c.responseCode + " en " + (c.dataSpec.uri.host ?: "?")
-        }
-        if (c is HttpDataSource.HttpDataSourceException) {
-            val inner = c.cause
-            return "Red: " + (inner?.javaClass?.simpleName ?: c.javaClass.simpleName) + " " + (inner?.message ?: c.message ?: "")
-        }
-        return e.errorCodeName + (c?.message?.let { ": " + it.take(80) } ?: "")
-    }
-
     private fun createPlayer(): ExoPlayer {
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(6000)
-            .setReadTimeoutMs(8000)
+            .setConnectTimeoutMs(10000)
+            .setReadTimeoutMs(15000)
         val sourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
-        val lc = DefaultLoadControl.Builder().setBufferDurationsMs(4000, 30000, 700, 1500).build()
-        val p = ExoPlayer.Builder(this).setMediaSourceFactory(sourceFactory).setLoadControl(lc).build()
+        val p = ExoPlayer.Builder(this).setMediaSourceFactory(sourceFactory).build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
@@ -377,7 +313,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                lastError = describe(error)
                 retry()
             }
         })
@@ -423,17 +358,13 @@ class MainActivity : AppCompatActivity() {
         if (playerLayer.visibility != View.VISIBLE) return
         attempt++
         val token = playToken
-        if (attempt == 2 && diagToken != token) {
-            diagToken = token
-            channels.getOrNull(currentIndex)?.let { sendDiag(it.url, it.name, lastError) }
-        }
         if (attempt <= 5) {
-            showMsg("Reconectando… " + attempt + "/5\n" + lastError)
+            showMsg("Reconectando…")
             ui.postDelayed({
                 if (token == playToken && playerLayer.visibility == View.VISIBLE) startPlayback()
-            }, 500)
+            }, 1200)
         } else {
-            showMsg("Canal no disponible (" + lastError + ").\nPulsa arriba o abajo para cambiar de canal.")
+            showMsg("Canal no disponible.\nPulsa arriba o abajo para cambiar de canal.")
         }
     }
 
