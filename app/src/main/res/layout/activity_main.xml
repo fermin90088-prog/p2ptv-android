@@ -35,6 +35,20 @@
                 android:paddingStart="6dp"
                 android:paddingEnd="6dp"
                 android:paddingBottom="12dp" />
+
+            <TextView
+                android:id="@+id/btnLogout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="6dp"
+                android:background="@drawable/bg_item"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:padding="10dp"
+                android:text="Cerrar sesión"
+                android:textColor="@color/muted"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
@@ -170,4 +184,58 @@
             android:textSize="16sp"
             android:visibility="gone" />
     </FrameLayout>
+
+    <!-- Acceso con PIN de 6 dígitos -->
+    <LinearLayout
+        android:id="@+id/loginLayer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="P2P CHOLLOS FER"
+            android:textColor="@color/accent"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Introduce tu PIN de 6 dígitos"
+            android:textColor="@color/muted"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/pinDots"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textColor="@color/accent"
+            android:textSize="28sp" />
+
+        <TextView
+            android:id="@+id/loginMsg"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp"
+            android:minHeight="20dp"
+            android:textColor="#F87171"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:id="@+id/keypad"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </LinearLayout>
 </FrameLayout>
