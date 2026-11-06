@@ -211,7 +211,13 @@ class MainActivity : AppCompatActivity() {
         playerLayer.visibility = View.VISIBLE
         playerLayer.requestFocus()
         playerView.keepScreenOn = true
-        playerTitle.text = channels[index].name
+        val chn = channels[index]
+        var info = chn.name
+        if (chn.nowTitle != null) {
+            info += "\n▶ " + chn.nowTitle
+            if (chn.nextTitle != null) info += "   ·   Después: " + chn.nextTitle
+        }
+        playerTitle.text = info
         showOverlay()
         startPlayback()
     }
