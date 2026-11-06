@@ -24,6 +24,9 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -62,6 +65,39 @@ class MainActivity : AppCompatActivity() {
     private var playToken = 0
     private var attempt = 0
     private var checking = false
+    private var playedOnce = false
+    private var wdRestarts = 0
+    private var stuckTicks = 0
+    private var lastPos = -1L
+
+    /** Si un canal se queda congelado, se reconecta solo */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            val p = player
+            if (p != null && playerLayer.visibility == View.VISIBLE && !isVod() && p.playWhenReady) {
+                val st = p.playbackState
+                val pos = p.currentPosition
+                if ((st == Player.STATE_BUFFERING || st == Player.STATE_READY) && pos == lastPos) stuckTicks++ else stuckTicks = 0
+                lastPos = pos
+                val limit = if (playedOnce) 3 else 8
+                if (stuckTicks >= limit) {
+                    stuckTicks = 0
+                    lastPos = -1L
+                    if (wdRestarts < 4) {
+                        wdRestarts++
+                        playedOnce = false
+                        showMsg("Reconectando… " + wdRestarts + "/4")
+                        startPlayback()
+                    } else {
+                        showMsg("Canal no disponible.\nPulsa arriba o abajo para cambiar de canal.")
+                    }
+                }
+            } else {
+                stuckTicks = 0
+            }
+            ui.postDelayed(this, 2000)
+        }
+    }
     private var inSeries = false
     private var prevGroup: String? = null
     private var baseTitle = ""
@@ -138,6 +174,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        ui.postDelayed(watchdog, 2000)
         if (Api.token == null) showLogin() else loadCategories()
     }
 
@@ -305,15 +342,23 @@ class MainActivity : AppCompatActivity() {
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(10000)
+            .setConnectTimeoutMs(8000)
             .setReadTimeoutMs(15000)
-        val sourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
-        val p = ExoPlayer.Builder(this).setMediaSourceFactory(sourceFactory).build()
+        val extractors = DefaultExtractorsFactory()
+            .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES)
+        val sourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http), extractors)
+        // Empieza a reproducir con ~1 s de carga y sigue llenando por detrás
+        val lc = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15000, 40000, 1000, 2500)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+        val p = ExoPlayer.Builder(this).setMediaSourceFactory(sourceFactory).setLoadControl(lc).build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
                     Player.STATE_READY -> {
                         attempt = 0
+                        playedOnce = true
                         playerMsg.visibility = View.GONE
                     }
                     Player.STATE_BUFFERING -> showMsg("Cargando…")
@@ -346,6 +391,10 @@ class MainActivity : AppCompatActivity() {
         }
         currentIndex = index
         attempt = 0
+        playedOnce = false
+        wdRestarts = 0
+        stuckTicks = 0
+        lastPos = -1L
         playToken++
         browser.visibility = View.GONE
         playerLayer.visibility = View.VISIBLE
