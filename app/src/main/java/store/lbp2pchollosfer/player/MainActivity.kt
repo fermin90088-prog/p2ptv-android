@@ -416,8 +416,11 @@ class MainActivity : AppCompatActivity() {
         val ch = channels.getOrNull(currentIndex) ?: return
         val p = player ?: createPlayer()
         val vod = isVod()
-        val asHls = !vod && attempt % 2 == 1
-        val mb = MediaItem.Builder().setUri(ch.url)
+        // Lista nueva: primero por el nodo (1 conexión por canal); si falla 3 veces, directo al proveedor
+        val hasDirect = !vod && ch.direct.isNotEmpty()
+        val viaNode = hasDirect && attempt < 3
+        val asHls = if (viaNode) true else if (hasDirect) attempt % 2 == 0 else (!vod && attempt % 2 == 1)
+        val mb = MediaItem.Builder().setUri(if (hasDirect && !viaNode) ch.direct else ch.url)
         if (!vod) mb.setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
         val item = mb.build()
         p.setMediaItem(item)
@@ -530,7 +533,7 @@ class MainActivity : AppCompatActivity() {
             for (ch in list) {
                 pool.execute {
                     val t0 = System.currentTimeMillis()
-                    val ok = probeStream(ch.url)
+                    val ok = probeStream(ch.direct.ifEmpty { ch.url })
                     val ms = (System.currentTimeMillis() - t0).toInt()
                     if (ok) good.incrementAndGet()
                     results.add(Triple(ch.id, ok, ms))

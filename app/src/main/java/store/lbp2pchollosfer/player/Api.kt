@@ -19,6 +19,7 @@ data class Channel(
     val nowStartMs: Long,
     val nowEndMs: Long,
     val nextTitle: String?,
+    val direct: String = "",
 )
 
 data class CatItem(
@@ -111,7 +112,7 @@ object Api {
     }
 
     fun channels(group: String?, search: String?, page: Int): List<Channel> {
-        val qs = StringBuilder("?page=$page")
+        val qs = StringBuilder("?relay=1&page=$page")
         if (!search.isNullOrEmpty()) {
             qs.append("&search=").append(URLEncoder.encode(search, "UTF-8"))
         } else if (!group.isNullOrEmpty()) {
@@ -136,6 +137,7 @@ object Api {
                     nowStartMs = ms(str(o, "now_start")),
                     nowEndMs = ms(str(o, "now_end")),
                     nextTitle = str(o, "next_title"),
+                    direct = str(o, "direct_url") ?: "",
                 )
             )
         }
