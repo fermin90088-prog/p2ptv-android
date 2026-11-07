@@ -144,8 +144,8 @@ object Api {
         return out
     }
 
-    private fun postJson(path: String, body: JSONObject) {
-        try {
+    private fun postJson(path: String, body: JSONObject): Int {
+        return try {
             val conn = URL(BASE + path).openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.doOutput = true
@@ -155,9 +155,11 @@ object Api {
             conn.setRequestProperty("User-Agent", "P2PTV-Android")
             token?.let { conn.setRequestProperty("Authorization", "Bearer " + it) }
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
-            conn.responseCode
+            val code = conn.responseCode
             conn.disconnect()
+            code
         } catch (e: Exception) {
+            -1
         }
     }
 

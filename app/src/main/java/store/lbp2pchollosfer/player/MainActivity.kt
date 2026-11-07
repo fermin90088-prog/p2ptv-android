@@ -357,7 +357,11 @@ class MainActivity : AppCompatActivity() {
                 val id = ch.id
                 val nm = ch.name
                 val dev = deviceId()
-                Thread { Api.watchPing(dev, id, nm) }.start()
+                Thread {
+                    // 401 = el acceso ha terminado (prueba o cuenta caducada): se corta y vuelve al PIN
+                    val code = Api.watchPing(dev, id, nm)
+                    if (code == 401) ui.post { showLogin("Tu acceso ha terminado. Introduce un PIN nuevo.") }
+                }.start()
                 ui.postDelayed(this, 30000)
             }
         }
