@@ -54,6 +54,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var loginMsg: TextView
     private lateinit var keypad: LinearLayout
     private var pin = ""
+    private lateinit var webView: android.webkit.WebView
+    private var webMode = true
 
     private val channels = ArrayList<Channel>()
     private lateinit var catAdapter: CatAdapter
@@ -123,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         pinDots = findViewById(R.id.pinDots)
         loginMsg = findViewById(R.id.loginMsg)
         keypad = findViewById(R.id.keypad)
+        webView = findViewById(R.id.web)
         setupKeypad()
         Api.token = getSharedPreferences("p2ptv", Context.MODE_PRIVATE).getString("token", null)
         findViewById<View>(R.id.btnLogout).setOnClickListener { showLogin() }
@@ -164,6 +167,15 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (webMode && webView.visibility == View.VISIBLE) {
+                    webView.evaluateJavascript("(window.__p2pBack && window.__p2pBack()) ? '1' : '0'") { r ->
+                        if (r != "\"1\"") {
+                            isEnabled = false
+                            onBackPressedDispatcher.onBackPressed()
+                        }
+                    }
+                    return
+                }
                 if (playerLayer.visibility == View.VISIBLE) {
                     closePlayer()
                 } else if (inSeries) {
@@ -178,7 +190,79 @@ class MainActivity : AppCompatActivity() {
         })
 
         ui.postDelayed(watchdog, 2000)
-        if (Api.token == null) showLogin() else loadCategories()
+        if (webMode) startWeb() else if (Api.token == null) showLogin() else loadCategories()
+    }
+
+    // ── La web, exactamente igual que en el navegador ───────────────────────
+
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    private fun startWeb() {
+        browser.visibility = View.GONE
+        loginLayer.visibility = View.GONE
+        playerLayer.visibility = View.GONE
+        webView.visibility = View.VISIBLE
+        val s = webView.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.mediaPlaybackRequiresUserGesture = false
+        s.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+        s.userAgentString = s.userAgentString + " P2PTVApp/2"
+        webView.setBackgroundColor(0xFF060B14.toInt())
+        webView.isFocusable = true
+        webView.isFocusableInTouchMode = true
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onReceivedError(
+                view: android.webkit.WebView,
+                request: android.webkit.WebResourceRequest,
+                error: android.webkit.WebResourceError,
+            ) {
+                if (request.isForMainFrame) ui.post { fallbackToNative() }
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView,
+                request: android.webkit.WebResourceRequest,
+            ): Boolean {
+                val u = request.url
+                if (u.scheme == "http" || u.scheme == "https") {
+                    if (u.host == "tv.lbp2pchollosfer.store") return false
+                }
+                try {
+                    val i = if (u.scheme == "intent") android.content.Intent.parseUri(u.toString(), android.content.Intent.URI_INTENT_SCHEME)
+                    else android.content.Intent(android.content.Intent.ACTION_VIEW, u)
+                    startActivity(i)
+                } catch (e: Exception) {
+                }
+                return true
+            }
+        }
+        webView.webChromeClient = android.webkit.WebChromeClient()
+        webView.loadUrl("https://tv.lbp2pchollosfer.store/")
+        webView.requestFocus()
+    }
+
+    /** Si la web no carga, se abre la versión nativa de siempre */
+    private fun fallbackToNative() {
+        if (!webMode) return
+        webMode = false
+        webView.stopLoading()
+        webView.visibility = View.GONE
+        if (Api.token == null) {
+            showLogin()
+        } else {
+            browser.visibility = View.VISIBLE
+            loadCategories()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (webMode) webView.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (webMode) webView.onResume()
     }
 
     // ── Acceso con PIN ──────────────────────────────────────────────────────
@@ -753,6 +837,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (webMode) webView.destroy()
         ui.removeCallbacksAndMessages(null)
         player?.release()
         player = null
