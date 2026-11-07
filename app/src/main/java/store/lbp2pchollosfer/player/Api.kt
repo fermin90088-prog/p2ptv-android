@@ -144,6 +144,13 @@ object Api {
         return out
     }
 
+    /** ¿Está encendido el P2P para este usuario? (cualquier fallo = apagado) */
+    fun p2pEnabled(): Boolean = try {
+        JSONObject(get("/app-api/p2p/config")).optBoolean("enabled", false)
+    } catch (e: Exception) {
+        false
+    }
+
     /** Envía al panel qué canales han reproducido (solo lo acepta el administrador) */
     fun reportHealth(batch: List<Triple<String, Boolean, Int>>): Boolean {
         return try {

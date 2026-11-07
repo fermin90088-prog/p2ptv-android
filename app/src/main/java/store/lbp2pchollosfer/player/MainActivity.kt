@@ -20,6 +20,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -346,7 +347,9 @@ class MainActivity : AppCompatActivity() {
             .setReadTimeoutMs(15000)
         val extractors = DefaultExtractorsFactory()
             .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES)
-        val sourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http), extractors)
+        val baseFactory = DefaultDataSource.Factory(this, http)
+        val p2pFactory = DataSource.Factory { P2pDataSource(baseFactory.createDataSource()) }
+        val sourceFactory = DefaultMediaSourceFactory(p2pFactory, extractors)
         // Empieza a reproducir con ~1 s de carga y sigue llenando por detrás
         val lc = DefaultLoadControl.Builder()
             .setBufferDurationsMs(15000, 40000, 1000, 2500)
@@ -420,6 +423,12 @@ class MainActivity : AppCompatActivity() {
         val hasDirect = !vod && ch.direct.isNotEmpty()
         val viaNode = hasDirect && attempt < 3
         val asHls = if (viaNode) true else if (hasDirect) attempt % 2 == 0 else (!vod && attempt % 2 == 1)
+        if (viaNode) {
+            P2p.loadConfig()
+            P2p.join(applicationContext, ch.id)
+        } else {
+            P2p.leave()
+        }
         val mb = MediaItem.Builder().setUri(if (hasDirect && !viaNode) ch.direct else ch.url)
         if (!vod) mb.setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
         val item = mb.build()
@@ -449,6 +458,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closePlayer() {
+        P2p.leave()
         playToken++
         ui.removeCallbacks(hideOverlay)
         player?.release()
@@ -590,6 +600,7 @@ class MainActivity : AppCompatActivity() {
             val d = pl.duration
             playerTitle.text = baseTitle + "\n" + fmt(pl.currentPosition) + (if (d > 0) " / " + fmt(d) else "") + (if (!pl.playWhenReady) "   (pausa)" else "")
         }
+        if (!isVod()) P2p.current?.let { playerTitle.text = baseTitle + "\n" + it.status() }
         overlay.visibility = View.VISIBLE
         ui.removeCallbacks(hideOverlay)
         ui.postDelayed(hideOverlay, 3500)
