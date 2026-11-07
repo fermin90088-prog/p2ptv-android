@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#080E1A</color>
-    <color name="panel">#0F172A</color>
+    <color name="bg">#060B14</color>
+    <color name="panel">#0A1220</color>
     <color name="text">#F1F5F9</color>
-    <color name="muted">#64748B</color>
+    <color name="muted">#7C8BA1</color>
     <color name="accent">#FBBF24</color>
     <color name="overlay">#B3000000</color>
+    <color name="line">#1AFFFFFF</color>
 </resources>

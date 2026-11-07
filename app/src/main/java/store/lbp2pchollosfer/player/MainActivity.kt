@@ -137,7 +137,9 @@ class MainActivity : AppCompatActivity() {
         categoriesView.adapter = catAdapter
 
         chAdapter = ChAdapter(channels) { index -> play(index) }
-        channelsView.layoutManager = LinearLayoutManager(this)
+        val wDp = resources.configuration.screenWidthDp
+        val span = if (wDp >= 1200) 3 else if (wDp >= 800) 2 else 1
+        channelsView.layoutManager = androidx.recyclerview.widget.GridLayoutManager(this, span)
         channelsView.adapter = chAdapter
 
         search.setOnEditorActionListener { v, actionId, _ ->

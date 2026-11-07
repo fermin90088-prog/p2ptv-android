@@ -36,6 +36,9 @@ class CatAdapter(
         }
         tv.text = "${item.title}  ·  ${item.count}"
         tv.isSelected = position == selected
+        val sel = position == selected
+        tv.setTextColor(ContextCompat.getColor(tv.context, if (sel) R.color.accent else R.color.text))
+        tv.setTypeface(null, if (sel) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
         tv.setOnClickListener {
             val pos = holder.bindingAdapterPosition
             if (pos == RecyclerView.NO_POSITION) return@setOnClickListener
@@ -92,6 +95,11 @@ class ChAdapter(
             holder.group.text = ch.group
             holder.group.setTextColor(ContextCompat.getColor(ctx, R.color.muted))
             holder.progress.visibility = View.GONE
+        }
+
+        holder.itemView.setOnFocusChangeListener { v, has ->
+            val s = if (has) 1.03f else 1f
+            v.animate().scaleX(s).scaleY(s).setDuration(120).start()
         }
 
         holder.itemView.setOnClickListener {
