@@ -144,6 +144,29 @@ object Api {
         return out
     }
 
+    private fun postJson(path: String, body: JSONObject) {
+        try {
+            val conn = URL(BASE + path).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.connectTimeout = 8000
+            conn.readTimeout = 10000
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("User-Agent", "P2PTV-Android")
+            token?.let { conn.setRequestProperty("Authorization", "Bearer " + it) }
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            conn.responseCode
+            conn.disconnect()
+        } catch (e: Exception) {
+        }
+    }
+
+    /** Avisa al panel de que este aparato está viendo un canal (cada 30 s) */
+    fun watchPing(device: String, room: String, name: String) =
+        postJson("/app-api/watch/ping", JSONObject().put("device", device).put("room", room).put("name", name))
+
+    fun watchStop(device: String) = postJson("/app-api/watch/stop", JSONObject().put("device", device))
+
     /** ¿Está encendido el P2P para este usuario? (cualquier fallo = apagado) */
     fun p2pEnabled(): Boolean = try {
         JSONObject(get("/app-api/p2p/config")).optBoolean("enabled", false)

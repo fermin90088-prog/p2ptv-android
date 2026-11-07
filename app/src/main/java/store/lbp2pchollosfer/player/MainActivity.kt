@@ -339,6 +339,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun deviceId(): String {
+        val sp = getSharedPreferences("p2ptv", Context.MODE_PRIVATE)
+        var d = sp.getString("device", null)
+        if (d == null) {
+            d = "a-" + java.util.UUID.randomUUID().toString().take(10)
+            sp.edit().putString("device", d).apply()
+        }
+        return d
+    }
+
+    /** Mientras se ve un canal, avisa al panel cada 30 s para contar la gente viendo a la vez */
+    private val pingRunner = object : Runnable {
+        override fun run() {
+            val ch = channels.getOrNull(currentIndex)
+            if (playerLayer.visibility == View.VISIBLE && ch != null && !isVod()) {
+                val id = ch.id
+                val nm = ch.name
+                val dev = deviceId()
+                Thread { Api.watchPing(dev, id, nm) }.start()
+                ui.postDelayed(this, 30000)
+            }
+        }
+    }
+
     private fun createPlayer(): ExoPlayer {
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
@@ -429,6 +453,8 @@ class MainActivity : AppCompatActivity() {
         } else {
             P2p.leave()
         }
+        ui.removeCallbacks(pingRunner)
+        if (!vod) ui.post(pingRunner)
         val mb = MediaItem.Builder().setUri(if (hasDirect && !viaNode) ch.direct else ch.url)
         if (!vod) mb.setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
         val item = mb.build()
@@ -459,6 +485,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun closePlayer() {
         P2p.leave()
+        ui.removeCallbacks(pingRunner)
+        val dev = deviceId()
+        Thread { Api.watchStop(dev) }.start()
         playToken++
         ui.removeCallbacks(hideOverlay)
         player?.release()
