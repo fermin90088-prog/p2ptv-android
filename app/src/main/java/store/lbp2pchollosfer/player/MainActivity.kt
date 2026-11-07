@@ -206,7 +206,8 @@ class MainActivity : AppCompatActivity() {
         s.domStorageEnabled = true
         s.mediaPlaybackRequiresUserGesture = false
         s.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-        s.userAgentString = s.userAgentString + " P2PTVApp/2"
+        val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "2" }
+        s.userAgentString = s.userAgentString + " P2PTVApp/" + ver
         webView.setBackgroundColor(0xFF060B14.toInt())
         webView.isFocusable = true
         webView.isFocusableInTouchMode = true
@@ -241,18 +242,12 @@ class MainActivity : AppCompatActivity() {
         webView.requestFocus()
     }
 
-    /** Si la web no carga, se abre la versión nativa de siempre */
+    /** Si la web no carga se muestra un aviso con Reintentar (ya no se abre la versión antigua) */
     private fun fallbackToNative() {
-        if (!webMode) return
-        webMode = false
-        webView.stopLoading()
-        webView.visibility = View.GONE
-        if (Api.token == null) {
-            showLogin()
-        } else {
-            browser.visibility = View.VISIBLE
-            loadCategories()
-        }
+        val html = "<html><body style='background:#060B14;color:#F1F5F9;font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center'>" +
+            "<h2 style='color:#FBBF24'>Sin conexión</h2><p>No se pudo abrir P2P Chollos Fer.</p>" +
+            "<a href='https://tv.lbp2pchollosfer.store/' style='background:#FBBF24;color:#000;padding:14px 32px;border-radius:14px;font-weight:bold;text-decoration:none'>Reintentar</a></body></html>"
+        webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
     }
 
     override fun onPause() {
