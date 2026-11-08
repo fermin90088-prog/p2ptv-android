@@ -225,17 +225,6 @@ class MainActivity : AppCompatActivity() {
                 request: android.webkit.WebResourceRequest,
             ): Boolean {
                 val u = request.url
-                val full = u.toString()
-                if (u.scheme == "intent" && full.contains("/app-api/vod/play/")) {
-                    val target = full.removePrefix("intent:").substringBefore("#Intent")
-                    val title = Regex("S\\.title=([^;]*)").find(full)?.groupValues?.get(1)?.let {
-                        try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it }
-                    } ?: ""
-                    val arr = org.json.JSONArray()
-                    arr.put(org.json.JSONObject().put("title", title).put("url", target))
-                    WebBridge().playVod(arr.toString(), 0)
-                    return true
-                }
                 if (u.scheme == "http" || u.scheme == "https") {
                     if (u.host == "tv.lbp2pchollosfer.store") return false
                 }
@@ -250,17 +239,38 @@ class MainActivity : AppCompatActivity() {
         }
         webView.webChromeClient = android.webkit.WebChromeClient()
         webView.addJavascriptInterface(WebBridge(), "P2PApp")
-        val sp = getSharedPreferences("p2ptv", Context.MODE_PRIVATE)
-        if (sp.getString("webv", "") != ver) {
-            webView.clearCache(true)
-            sp.edit().putString("webv", ver).apply()
-        }
         webView.loadUrl("https://tv.lbp2pchollosfer.store/")
         webView.requestFocus()
     }
 
     /** La web llama a esto para reproducir cine y series con el reproductor de la app */
     inner class WebBridge {
+        @android.webkit.JavascriptInterface
+        fun setToken(t: String) {
+            if (t.isNotEmpty()) Api.token = t
+        }
+
+        @android.webkit.JavascriptInterface
+        fun playLive(json: String, index: Int) {
+            ui.post {
+                try {
+                    val arr = org.json.JSONArray(json)
+                    val list = ArrayList<Channel>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        list.add(Channel(o.optString("id"), o.optString("title"), o.optString("kind"), o.optString("url"), "", null, 0L, 0L, null))
+                    }
+                    if (list.isEmpty()) return@post
+                    channels.clear()
+                    channels.addAll(list)
+                    chAdapter.notifyDataSetChanged()
+                    inSeries = false
+                    play(index.coerceIn(0, list.size - 1))
+                } catch (e: Exception) {
+                }
+            }
+        }
+
         @android.webkit.JavascriptInterface
         fun playVod(json: String, index: Int) {
             ui.post {
@@ -569,6 +579,20 @@ class MainActivity : AppCompatActivity() {
     private fun startPlayback() {
         val ch = channels.getOrNull(currentIndex) ?: return
         val p = player ?: createPlayer()
+        if (ch.group == "hls" || ch.group == "ts") {
+            // Canal elegido en la web: el reproductor de la app lo reproduce y cuenta como "viendo ahora"
+            ui.removeCallbacks(pingRunner)
+            ui.post(pingRunner)
+            val asHls = ch.group == "hls" || attempt % 2 == 1
+            val item = MediaItem.Builder()
+                .setUri(ch.url)
+                .setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
+                .build()
+            p.setMediaItem(item)
+            p.prepare()
+            p.playWhenReady = true
+            return
+        }
         val vod = isVod()
         // Lista nueva: primero por el nodo (1 conexión por canal); si falla 3 veces, directo al proveedor
         val hasDirect = !vod && ch.direct.isNotEmpty()
