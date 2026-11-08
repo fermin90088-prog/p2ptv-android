@@ -209,6 +209,9 @@ class MainActivity : AppCompatActivity() {
         val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "2" }
         s.userAgentString = s.userAgentString + " P2PTVApp/" + ver
         webView.setBackgroundColor(0xFF060B14.toInt())
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        webView.overScrollMode = View.OVER_SCROLL_NEVER
+        s.setSupportZoom(false)
         webView.isFocusable = true
         webView.isFocusableInTouchMode = true
         webView.webViewClient = object : android.webkit.WebViewClient() {
