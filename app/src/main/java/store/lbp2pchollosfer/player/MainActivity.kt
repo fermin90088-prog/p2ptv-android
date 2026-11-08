@@ -225,6 +225,17 @@ class MainActivity : AppCompatActivity() {
                 request: android.webkit.WebResourceRequest,
             ): Boolean {
                 val u = request.url
+                val full = u.toString()
+                if (u.scheme == "intent" && full.contains("/app-api/vod/play/")) {
+                    val target = full.removePrefix("intent:").substringBefore("#Intent")
+                    val title = Regex("S\\.title=([^;]*)").find(full)?.groupValues?.get(1)?.let {
+                        try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it }
+                    } ?: ""
+                    val arr = org.json.JSONArray()
+                    arr.put(org.json.JSONObject().put("title", title).put("url", target))
+                    WebBridge().playVod(arr.toString(), 0)
+                    return true
+                }
                 if (u.scheme == "http" || u.scheme == "https") {
                     if (u.host == "tv.lbp2pchollosfer.store") return false
                 }
@@ -239,6 +250,11 @@ class MainActivity : AppCompatActivity() {
         }
         webView.webChromeClient = android.webkit.WebChromeClient()
         webView.addJavascriptInterface(WebBridge(), "P2PApp")
+        val sp = getSharedPreferences("p2ptv", Context.MODE_PRIVATE)
+        if (sp.getString("webv", "") != ver) {
+            webView.clearCache(true)
+            sp.edit().putString("webv", ver).apply()
+        }
         webView.loadUrl("https://tv.lbp2pchollosfer.store/")
         webView.requestFocus()
     }
