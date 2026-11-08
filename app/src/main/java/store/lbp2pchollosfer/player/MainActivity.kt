@@ -209,9 +209,6 @@ class MainActivity : AppCompatActivity() {
         val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "2" }
         s.userAgentString = s.userAgentString + " P2PTVApp/" + ver
         webView.setBackgroundColor(0xFF060B14.toInt())
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-        webView.overScrollMode = View.OVER_SCROLL_NEVER
-        s.setSupportZoom(false)
         webView.isFocusable = true
         webView.isFocusableInTouchMode = true
         webView.webViewClient = object : android.webkit.WebViewClient() {
@@ -241,8 +238,33 @@ class MainActivity : AppCompatActivity() {
             }
         }
         webView.webChromeClient = android.webkit.WebChromeClient()
+        webView.addJavascriptInterface(WebBridge(), "P2PApp")
         webView.loadUrl("https://tv.lbp2pchollosfer.store/")
         webView.requestFocus()
+    }
+
+    /** La web llama a esto para reproducir cine y series con el reproductor de la app */
+    inner class WebBridge {
+        @android.webkit.JavascriptInterface
+        fun playVod(json: String, index: Int) {
+            ui.post {
+                try {
+                    val arr = org.json.JSONArray(json)
+                    val list = ArrayList<Channel>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        list.add(Channel("vod-" + i, o.optString("title"), "", o.optString("url"), "", null, 0L, 0L, null))
+                    }
+                    if (list.isEmpty()) return@post
+                    channels.clear()
+                    channels.addAll(list)
+                    chAdapter.notifyDataSetChanged()
+                    inSeries = list.size > 1
+                    play(index.coerceIn(0, list.size - 1))
+                } catch (e: Exception) {
+                }
+            }
+        }
     }
 
     /** Si la web no carga se muestra un aviso con Reintentar (ya no se abre la versión antigua) */
@@ -512,6 +534,7 @@ class MainActivity : AppCompatActivity() {
         lastPos = -1L
         playToken++
         browser.visibility = View.GONE
+        if (webMode) webView.visibility = View.GONE
         playerLayer.visibility = View.VISIBLE
         playerLayer.requestFocus()
         playerView.keepScreenOn = true
@@ -584,9 +607,16 @@ class MainActivity : AppCompatActivity() {
         playerView.keepScreenOn = false
         playerMsg.visibility = View.GONE
         playerLayer.visibility = View.GONE
-        browser.visibility = View.VISIBLE
-        channelsView.scrollToPosition(currentIndex.coerceAtLeast(0))
-        channelsView.requestFocus()
+        if (webMode) {
+            inSeries = false
+            browser.visibility = View.GONE
+            webView.visibility = View.VISIBLE
+            webView.requestFocus()
+        } else {
+            browser.visibility = View.VISIBLE
+            channelsView.scrollToPosition(currentIndex.coerceAtLeast(0))
+            channelsView.requestFocus()
+        }
     }
 
     /** Prueba cada canal de la categoría abierta, como lo haría el reproductor, y avisa al panel */
@@ -692,7 +722,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun isVod(): Boolean {
         val u = channels.getOrNull(currentIndex)?.url ?: return false
-        return u.contains("/Videos/") && u.contains("static=true")
+        return u.contains("/app-api/vod/play/") || (u.contains("/Videos/") && u.contains("static=true"))
     }
 
     private fun fmt(ms: Long): String {
