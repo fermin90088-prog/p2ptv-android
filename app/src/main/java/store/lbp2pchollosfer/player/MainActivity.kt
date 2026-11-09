@@ -54,6 +54,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var loginMsg: TextView
     private lateinit var keypad: LinearLayout
     private var pin = ""
+    private var playStartMs = 0L
+    private var reportedOk = false
     private lateinit var webView: android.webkit.WebView
     private var webMode = true
 
@@ -522,8 +524,8 @@ class MainActivity : AppCompatActivity() {
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(8000)
-            .setReadTimeoutMs(15000)
+            .setConnectTimeoutMs(6000)
+            .setReadTimeoutMs(10000)
         val extractors = DefaultExtractorsFactory()
             .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES)
         val baseFactory = DefaultDataSource.Factory(this, http)
@@ -541,6 +543,10 @@ class MainActivity : AppCompatActivity() {
                     Player.STATE_READY -> {
                         attempt = 0
                         playedOnce = true
+                        if (!reportedOk) {
+                            reportedOk = true
+                            reportHealth(true)
+                        }
                         playerMsg.visibility = View.GONE
                     }
                     Player.STATE_BUFFERING -> showMsg("Cargando…")
@@ -572,6 +578,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         currentIndex = index
+        playStartMs = System.currentTimeMillis()
+        reportedOk = false
         attempt = 0
         playedOnce = false
         wdRestarts = 0
@@ -637,14 +645,40 @@ class MainActivity : AppCompatActivity() {
         if (playerLayer.visibility != View.VISIBLE) return
         attempt++
         val token = playToken
-        if (attempt <= 5) {
+        val webLive = channels.getOrNull(currentIndex)?.group.let { it == "hls" || it == "ts" }
+        if (attempt <= (if (webLive) 3 else 5)) {
             showMsg("Reconectando…")
             ui.postDelayed({
                 if (token == playToken && playerLayer.visibility == View.VISIBLE) startPlayback()
             }, 1200)
         } else {
             showMsg("Canal no disponible.\nPulsa arriba o abajo para cambiar de canal.")
+            reportHealth(false)
         }
+    }
+
+    /** Avisa al servidor de si el canal arrancó (y cuánto tardó) para ordenar las listas */
+    private fun reportHealth(ok: Boolean) {
+        val ch = channels.getOrNull(currentIndex) ?: return
+        if (ch.group != "hls" && ch.group != "ts") return
+        val tok = Api.token ?: return
+        val ms = (System.currentTimeMillis() - playStartMs).toInt()
+        val id = ch.id
+        Thread {
+            try {
+                val c = java.net.URL(Api.BASE + "/app-api/health/play").openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "POST"
+                c.doOutput = true
+                c.connectTimeout = 5000
+                c.readTimeout = 5000
+                c.setRequestProperty("Content-Type", "application/json")
+                c.setRequestProperty("Authorization", "Bearer " + tok)
+                c.outputStream.use { it.write(("{\"id\":\"" + id + "\",\"ok\":" + ok + ",\"ms\":" + ms + "}").toByteArray()) }
+                c.responseCode
+                c.disconnect()
+            } catch (e: Exception) {
+            }
+        }.start()
     }
 
     private fun zap(dir: Int) {
