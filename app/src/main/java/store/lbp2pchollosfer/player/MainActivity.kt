@@ -71,6 +71,9 @@ class MainActivity : AppCompatActivity() {
     private var attempt = 0
     private var checking = false
     private var playedOnce = false
+    private var altIndex = -1
+    private var altSwitches = 0
+    private val rebufferTimes = ArrayList<Long>()
     private var wdRestarts = 0
     private var stuckTicks = 0
     private var lastPos = -1L
@@ -88,7 +91,9 @@ class MainActivity : AppCompatActivity() {
                 if (stuckTicks >= limit) {
                     stuckTicks = 0
                     lastPos = -1L
-                    if (wdRestarts < 4) {
+                    if (wdRestarts >= 1 && altSwitches < 6 && switchAlt()) {
+                        // ya ha saltado a otra señal
+                    } else if (wdRestarts < 4) {
                         wdRestarts++
                         playedOnce = false
                         showMsg("Reconectando… " + wdRestarts + "/4")
@@ -284,7 +289,10 @@ class MainActivity : AppCompatActivity() {
                     val list = ArrayList<Channel>()
                     for (i in 0 until arr.length()) {
                         val o = arr.getJSONObject(i)
-                        list.add(Channel(o.optString("id"), o.optString("title"), o.optString("kind"), o.optString("url"), "", null, 0L, 0L, null))
+                        val al = ArrayList<String>()
+                        val aj = o.optJSONArray("alts")
+                        if (aj != null) for (j in 0 until aj.length()) al.add(aj.getString(j))
+                        list.add(Channel(o.optString("id"), o.optString("title"), o.optString("kind"), o.optString("url"), "", null, 0L, 0L, null, "", al))
                     }
                     if (list.isEmpty()) return@post
                     channels.clear()
@@ -554,7 +562,19 @@ class MainActivity : AppCompatActivity() {
                         }
                         playerMsg.visibility = View.GONE
                     }
-                    Player.STATE_BUFFERING -> showMsg("Cargando…")
+                    Player.STATE_BUFFERING -> {
+                        showMsg("Cargando…")
+                        // Si se queda cargando 3 veces en un minuto, pasa sola a otra señal del mismo canal
+                        if (playedOnce) {
+                            val now = System.currentTimeMillis()
+                            rebufferTimes.add(now)
+                            rebufferTimes.removeAll { now - it > 60000 }
+                            if (rebufferTimes.size >= 3 && altSwitches < 6) {
+                                rebufferTimes.clear()
+                                ui.post { switchAlt() }
+                            }
+                        }
+                    }
                     Player.STATE_ENDED -> if (isVod()) {
                         if (inSeries && currentIndex + 1 < channels.size) play(currentIndex + 1) else closePlayer()
                     } else retry()
@@ -590,6 +610,9 @@ class MainActivity : AppCompatActivity() {
         wdRestarts = 0
         stuckTicks = 0
         lastPos = -1L
+        altIndex = -1
+        altSwitches = 0
+        rebufferTimes.clear()
         playToken++
         browser.visibility = View.GONE
         if (webMode) webView.visibility = View.GONE
@@ -617,7 +640,7 @@ class MainActivity : AppCompatActivity() {
             ui.post(pingRunner)
             val asHls = ch.group == "hls" || attempt % 2 == 1
             val item = MediaItem.Builder()
-                .setUri(ch.url)
+                .setUri(currentSourceUrl(ch))
                 .setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
                 .build()
             p.setMediaItem(item)
@@ -649,6 +672,7 @@ class MainActivity : AppCompatActivity() {
     private fun retry() {
         if (playerLayer.visibility != View.VISIBLE) return
         attempt++
+        if (attempt >= 2 && altSwitches < 6 && switchAlt()) return
         val token = playToken
         val webLive = channels.getOrNull(currentIndex)?.group.let { it == "hls" || it == "ts" }
         if (attempt <= (if (webLive) 3 else 5)) {
@@ -660,6 +684,48 @@ class MainActivity : AppCompatActivity() {
             showMsg("Canal no disponible.\nPulsa arriba o abajo para cambiar de canal.")
             reportHealth(false)
         }
+    }
+
+    private fun currentSourceUrl(ch: Channel): String =
+        if (altIndex >= 0 && altIndex < ch.alts.size) ch.alts[altIndex] else ch.url
+
+    /** Si la señal falla o se corta, pasa a otra versión del mismo canal (HD, SD, otro proveedor) */
+    private fun switchAlt(): Boolean {
+        val ch = channels.getOrNull(currentIndex) ?: return false
+        if (ch.alts.isEmpty() || (ch.group != "hls" && ch.group != "ts")) return false
+        reportStall(currentSourceUrl(ch), ch.id)
+        altSwitches++
+        altIndex = if (altIndex + 1 < ch.alts.size) altIndex + 1 else -1
+        attempt = 0
+        playedOnce = false
+        wdRestarts = 0
+        stuckTicks = 0
+        lastPos = -1L
+        playStartMs = System.currentTimeMillis()
+        showMsg("Cambiando a otra señal…")
+        startPlayback()
+        return true
+    }
+
+    /** Avisa al servidor de que esta señal se cortó, para bajarla de posición en las listas */
+    private fun reportStall(url: String, fallbackId: String) {
+        val id = Regex("ch%2F(\\d+)").find(url)?.groupValues?.get(1) ?: fallbackId
+        val tok = Api.token ?: return
+        Thread {
+            try {
+                val c = java.net.URL(Api.BASE + "/app-api/health/stall").openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "POST"
+                c.doOutput = true
+                c.connectTimeout = 5000
+                c.readTimeout = 5000
+                c.setRequestProperty("Content-Type", "application/json")
+                c.setRequestProperty("Authorization", "Bearer " + tok)
+                c.outputStream.use { it.write(("{\"id\":\"" + id + "\"}").toByteArray()) }
+                c.responseCode
+                c.disconnect()
+            } catch (e: Exception) {
+            }
+        }.start()
     }
 
     /** Avisa al servidor de si el canal arrancó (y cuánto tardó) para ordenar las listas */

@@ -20,6 +20,7 @@ data class Channel(
     val nowEndMs: Long,
     val nextTitle: String?,
     val direct: String = "",
+    val alts: List<String> = emptyList(),
 )
 
 data class CatItem(
