@@ -176,6 +176,25 @@ object Api {
         false
     }
 
+    /** Lista de canales de unas categorías (id y dirección) para que el administrador los pruebe */
+    fun probeList(groups: String): List<Pair<String, String>> {
+        return try {
+            val conn = URL(BASE + "/app-api/health/list?groups=" + URLEncoder.encode(groups, "UTF-8")).openConnection() as HttpURLConnection
+            conn.connectTimeout = 10000
+            conn.readTimeout = 30000
+            token?.let { conn.setRequestProperty("Authorization", "Bearer " + it) }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            val arr = JSONArray(text)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Pair(o.getString("id"), o.getString("url"))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     /** Envía al panel qué canales han reproducido (solo lo acepta el administrador) */
     fun reportHealth(batch: List<Triple<String, Boolean, Int>>): Boolean {
         return try {

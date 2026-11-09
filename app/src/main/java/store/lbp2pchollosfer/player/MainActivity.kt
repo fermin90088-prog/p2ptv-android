@@ -272,6 +272,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         @android.webkit.JavascriptInterface
+        fun checkGroups(groups: String) {
+            startGroupCheck(groups)
+        }
+
+        @android.webkit.JavascriptInterface
         fun playLive(json: String, index: Int) {
             ui.post {
                 try {
@@ -738,6 +743,55 @@ class MainActivity : AppCompatActivity() {
         } finally {
             try { c?.disconnect() } catch (e: Exception) {}
         }
+    }
+
+    /** Prueba todos los canales de unas categorías y avisa a la pantalla de cuántos funcionan */
+    private fun jsCheck(done: Int, total: Int, good: Int, fin: Boolean) {
+        ui.post {
+            webView.evaluateJavascript("window.__p2pCheck&&window.__p2pCheck(" + done + "," + total + "," + good + "," + fin + ")", null)
+        }
+    }
+
+    private fun startGroupCheck(groups: String) {
+        if (checking) return
+        checking = true
+        Thread {
+            val list = Api.probeList(groups)
+            if (list.isEmpty()) {
+                checking = false
+                jsCheck(0, 0, 0, true)
+                return@Thread
+            }
+            val total = list.size
+            val done = java.util.concurrent.atomic.AtomicInteger(0)
+            val good = java.util.concurrent.atomic.AtomicInteger(0)
+            val results = java.util.Collections.synchronizedList(ArrayList<Triple<String, Boolean, Int>>())
+            jsCheck(0, total, 0, false)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+            for ((id, url) in list) {
+                pool.execute {
+                    val t0 = System.currentTimeMillis()
+                    val ok = probeStream(url)
+                    val ms = (System.currentTimeMillis() - t0).toInt()
+                    if (ok) good.incrementAndGet()
+                    results.add(Triple(id, ok, ms))
+                    val n = done.incrementAndGet()
+                    if (n % 25 == 0 || n == total) {
+                        val batch = ArrayList<Triple<String, Boolean, Int>>()
+                        synchronized(results) {
+                            batch.addAll(results)
+                            results.clear()
+                        }
+                        if (batch.isNotEmpty()) Api.reportHealth(batch)
+                        jsCheck(n, total, good.get(), false)
+                    }
+                }
+            }
+            pool.shutdown()
+            pool.awaitTermination(3, java.util.concurrent.TimeUnit.HOURS)
+            checking = false
+            jsCheck(total, total, good.get(), true)
+        }.start()
     }
 
     private fun runHealthCheck() {
