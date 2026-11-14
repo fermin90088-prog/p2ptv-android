@@ -12,7 +12,7 @@ import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 
 /** Reproductor VLC (libVLC) para películas y series: reproduce casi cualquier audio y vídeo sin convertir. */
-class VlcEngine(ctx: Context, private val parent: FrameLayout) {
+class VlcEngine(ctx: Context, private val parent: FrameLayout, private val software: Boolean = false) {
 
     companion object {
         val available: Boolean by lazy {
@@ -29,6 +29,7 @@ class VlcEngine(ctx: Context, private val parent: FrameLayout) {
     var onBuffering: ((Float) -> Unit)? = null
     var onEnded: (() -> Unit)? = null
     var onError: (() -> Unit)? = null
+    var onNoVideo: (() -> Unit)? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val layout = VLCVideoLayout(ctx)
@@ -36,6 +37,8 @@ class VlcEngine(ctx: Context, private val parent: FrameLayout) {
     private var mp: MediaPlayer? = null
     private var started = false
     private var released = false
+    private var voutShown = false
+    private val noVideoCheck = Runnable { if (!released && !voutShown) onNoVideo?.invoke() }
     private val startTimeout = Runnable { if (!started && !released) onError?.invoke() }
 
     init {
@@ -58,7 +61,17 @@ class VlcEngine(ctx: Context, private val parent: FrameLayout) {
                 MediaPlayer.Event.Playing -> {
                     started = true
                     handler.removeCallbacks(startTimeout)
+                    if (!voutShown) {
+                        handler.removeCallbacks(noVideoCheck)
+                        handler.postDelayed(noVideoCheck, 10000)
+                    }
                     onPlaying?.invoke()
+                }
+                MediaPlayer.Event.Vout -> {
+                    if (ev.voutCount > 0) {
+                        voutShown = true
+                        handler.removeCallbacks(noVideoCheck)
+                    }
                 }
                 MediaPlayer.Event.Buffering -> onBuffering?.invoke(ev.buffering)
                 MediaPlayer.Event.EndReached -> onEnded?.invoke()
@@ -66,7 +79,8 @@ class VlcEngine(ctx: Context, private val parent: FrameLayout) {
             }
         }
         val m = Media(lv, Uri.parse(url))
-        m.setHWDecoderEnabled(true, false)
+        m.setHWDecoderEnabled(!software, false)
+        if (software) m.addOption(":avcodec-hw=none")
         m.addOption(":http-user-agent=P2PTVApp VLC/3.0.18 LibVLC/3.0.18")
         p.setMedia(m)
         m.release()
@@ -103,6 +117,7 @@ class VlcEngine(ctx: Context, private val parent: FrameLayout) {
         if (released) return
         released = true
         handler.removeCallbacks(startTimeout)
+        handler.removeCallbacks(noVideoCheck)
         val p = mp
         val lv = libVlc
         mp = null

@@ -686,7 +686,9 @@ class MainActivity : AppCompatActivity() {
         playerLayer.keepScreenOn = true
         vlc?.release()
         val token = playToken
-        val e = VlcEngine(this, playerLayer)
+        val prefs = getSharedPreferences("p2ptv", Context.MODE_PRIVATE)
+        val soft = prefs.getBoolean("vlc_soft", false)
+        val e = VlcEngine(this, playerLayer, soft)
         vlc = e
         e.onPlaying = { ui.post { if (token == playToken && vlc === e) playerMsg.visibility = View.GONE } }
         e.onBuffering = { pct ->
@@ -708,6 +710,21 @@ class MainActivity : AppCompatActivity() {
                 if (token == playToken && vlc === e) {
                     vlcFailed = true
                     showMsg("Probando otro reproductor…")
+                    startPlayback()
+                }
+            }
+        }
+        e.onNoVideo = {
+            ui.post {
+                if (token == playToken && vlc === e) {
+                    if (!soft) {
+                        // Esta tele no pinta la imagen con decodificación por hardware: se recuerda y se prueba por software
+                        prefs.edit().putBoolean("vlc_soft", true).apply()
+                        showMsg("Ajustando la imagen…")
+                    } else {
+                        vlcFailed = true
+                        showMsg("Probando otro reproductor…")
+                    }
                     startPlayback()
                 }
             }
