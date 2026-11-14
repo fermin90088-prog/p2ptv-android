@@ -2,14 +2,14 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, vlc]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: build-apk
+  group: build-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,7 +45,9 @@ jobs:
       - name: Publicar enlace de descarga
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: APK más reciente
-          make_latest: true
+          tag_name: ${{ github.ref_name == 'main' && 'latest' || 'vlc-test' }}
+          name: ${{ github.ref_name == 'main' && 'APK más reciente' || 'APK de prueba con VLC' }}
+          make_latest: ${{ github.ref_name == 'main' }}
+          prerelease: ${{ github.ref_name != 'main' }}
+          target_commitish: ${{ github.sha }}
           files: app/build/outputs/apk/debug/app-debug.apk

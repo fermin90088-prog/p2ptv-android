@@ -52,4 +52,5 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("io.coil-kt:coil:2.6.0")
     implementation("io.getstream:stream-webrtc-android:1.3.9")
+    implementation("org.videolan.android:libvlc-all:3.6.0")
 }

@@ -64,6 +64,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chAdapter: ChAdapter
 
     private var player: ExoPlayer? = null
+    private var vlc: VlcEngine? = null
+    private var vlcFailed = false
     private var currentIndex = -1
     private var currentGroup: String? = null
     private var loadToken = 0
@@ -613,6 +615,7 @@ class MainActivity : AppCompatActivity() {
         altIndex = -1
         altSwitches = 0
         rebufferTimes.clear()
+        vlcFailed = false
         playToken++
         browser.visibility = View.GONE
         if (webMode) webView.visibility = View.GONE
@@ -633,6 +636,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun startPlayback() {
         val ch = channels.getOrNull(currentIndex) ?: return
+        // Películas y series: reproduce VLC; si falla, pasa solo al reproductor de antes
+        if (isVod() && !vlcFailed && VlcEngine.available) {
+            startVlc(ch.url)
+            return
+        }
+        stopVlc()
         val p = player ?: createPlayer()
         if (ch.group == "hls" || ch.group == "ts") {
             // Canal elegido en la web: el reproductor de la app lo reproduce y cuenta como "viendo ahora"
@@ -667,6 +676,51 @@ class MainActivity : AppCompatActivity() {
         p.setMediaItem(item)
         p.prepare()
         p.playWhenReady = true
+    }
+
+    private fun startVlc(url: String) {
+        player?.release()
+        player = null
+        playerView.player = null
+        playerView.visibility = View.GONE
+        playerLayer.keepScreenOn = true
+        vlc?.release()
+        val token = playToken
+        val e = VlcEngine(this, playerLayer)
+        vlc = e
+        e.onPlaying = { ui.post { if (token == playToken && vlc === e) playerMsg.visibility = View.GONE } }
+        e.onBuffering = { pct ->
+            ui.post {
+                if (token == playToken && vlc === e) {
+                    if (pct < 100f) showMsg("Cargando… " + pct.toInt() + "%") else playerMsg.visibility = View.GONE
+                }
+            }
+        }
+        e.onEnded = {
+            ui.post {
+                if (token == playToken && vlc === e) {
+                    if (inSeries && currentIndex + 1 < channels.size) play(currentIndex + 1) else closePlayer()
+                }
+            }
+        }
+        e.onError = {
+            ui.post {
+                if (token == playToken && vlc === e) {
+                    vlcFailed = true
+                    showMsg("Probando otro reproductor…")
+                    startPlayback()
+                }
+            }
+        }
+        showMsg("Cargando…")
+        e.play(url)
+    }
+
+    private fun stopVlc() {
+        vlc?.release()
+        vlc = null
+        playerView.visibility = View.VISIBLE
+        playerLayer.keepScreenOn = false
     }
 
     private fun retry() {
@@ -765,6 +819,7 @@ class MainActivity : AppCompatActivity() {
         Thread { Api.watchStop(dev) }.start()
         playToken++
         ui.removeCallbacks(hideOverlay)
+        stopVlc()
         player?.release()
         player = null
         playerView.player = null
@@ -947,6 +1002,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun seekBy(ms: Long) {
+        val v = vlc
+        if (v != null) {
+            v.seekBy(ms)
+            showOverlay()
+            return
+        }
         val p = player ?: return
         val target = (p.currentPosition + ms).coerceAtLeast(0L)
         val d = p.duration
@@ -956,7 +1017,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun showOverlay() {
         val pl = player
-        if (isVod() && pl != null) {
+        val v = vlc
+        if (isVod() && v != null) {
+            val dv = v.duration()
+            playerTitle.text = baseTitle + "\n" + fmt(v.position()) + (if (dv > 0) " / " + fmt(dv) else "") + (if (!v.isPlaying()) "   (pausa)" else "")
+        } else if (isVod() && pl != null) {
             val d = pl.duration
             playerTitle.text = baseTitle + "\n" + fmt(pl.currentPosition) + (if (d > 0) " / " + fmt(d) else "") + (if (!pl.playWhenReady) "   (pausa)" else "")
         }
@@ -1008,16 +1073,19 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                    player?.let { it.playWhenReady = !it.playWhenReady }
+                    val v = vlc
+                    if (v != null) v.togglePause() else player?.let { it.playWhenReady = !it.playWhenReady }
                     showOverlay()
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                    vlc?.setPaused(false)
                     player?.playWhenReady = true
                     showOverlay()
                     return true
                 }
                 KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    vlc?.setPaused(true)
                     player?.playWhenReady = false
                     showOverlay()
                     return true
@@ -1062,6 +1130,7 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         if (playerLayer.visibility == View.VISIBLE) {
             playToken++
+            stopVlc()
             player?.release()
             player = null
             playerView.player = null
@@ -1080,6 +1149,8 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         if (webMode) webView.destroy()
         ui.removeCallbacksAndMessages(null)
+        vlc?.release()
+        vlc = null
         player?.release()
         player = null
         io.shutdownNow()
