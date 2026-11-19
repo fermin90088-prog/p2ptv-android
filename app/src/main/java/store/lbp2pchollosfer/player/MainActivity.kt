@@ -1060,20 +1060,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (playerLayer.visibility == View.VISIBLE) {
-            playToken++
-            player?.release()
-            player = null
-            playerView.player = null
-        }
+        // Al salir de la app (Inicio, tele en reposo...) se cierra el canal: al volver se entra a la lista,
+        // no al mismo canal otra vez
+        if (playerLayer.visibility == View.VISIBLE) closePlayer()
     }
 
     override fun onStart() {
         super.onStart()
-        if (playerLayer.visibility == View.VISIBLE && player == null) {
-            attempt = 0
-            startPlayback()
-        }
     }
 
     override fun onDestroy() {
