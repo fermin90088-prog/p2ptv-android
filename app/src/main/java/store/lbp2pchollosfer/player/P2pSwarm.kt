@@ -313,8 +313,10 @@ class Swarm(val room: String, private val factory: PeerConnectionFactory) {
         cached(key)?.let { return it }
         val deadline = System.currentTimeMillis() + budgetMs
         val ready = peers.values.filter { it.ready }
-        val ordered = ready.filter { it.have.contains(key) }.shuffled() +
-            ready.filter { !it.have.contains(key) }.take(2)
+        // Solo se pide a quien YA anunció tener el trozo. Antes también se preguntaba a otros que quizá no lo tenían
+        // y cada trozo podía esperar hasta 1,2 s antes de bajar del nodo (cortes en directos pesados).
+        val ordered = ready.filter { it.have.contains(key) }.shuffled()
+        if (ordered.isEmpty()) return null
         for (p in ordered) {
             val left = deadline - System.currentTimeMillis()
             if (left <= 0) break
