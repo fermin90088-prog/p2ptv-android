@@ -343,6 +343,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (webMode) webView.onResume()
+        Updater.resumePending(this)
+        Updater.checkIfDue(this)
     }
 
     // ── Acceso con PIN ──────────────────────────────────────────────────────

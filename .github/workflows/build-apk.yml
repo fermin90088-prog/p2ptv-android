@@ -55,6 +55,12 @@ jobs:
           make_latest: false
           files: app/build/outputs/apk/debug/app-debug.apk
 
+      # Datos de la última versión: la app los lee para avisar de que hay una nueva
+      - name: Datos de versión para el actualizador
+        if: github.event_name != 'pull_request'
+        run: |
+          echo '{"versionCode": ${{ github.run_number }}, "versionName": "2.${{ github.run_number }}", "url": "https://github.com/${{ github.repository }}/releases/download/latest/app-debug.apk"}' > app/build/outputs/apk/debug/version.json
+
       - name: Publicar enlace de descarga
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
@@ -62,4 +68,6 @@ jobs:
           tag_name: latest
           name: APK más reciente
           make_latest: true
-          files: app/build/outputs/apk/debug/app-debug.apk
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/version.json
