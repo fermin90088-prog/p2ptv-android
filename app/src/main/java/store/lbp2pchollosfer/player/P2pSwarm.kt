@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit
 object P2p {
     @Volatile var enabled = false
     @Volatile private var configAsked = false
+    @Volatile private var configDone = false
     @Volatile var current: Swarm? = null
     private var factory: PeerConnectionFactory? = null
     private val lock = Any()
@@ -38,7 +39,10 @@ object P2p {
     fun loadConfig() {
         if (configAsked) return
         configAsked = true
-        Thread { enabled = Api.p2pEnabled() }.start()
+        Thread {
+            enabled = Api.p2pEnabled()
+            configDone = true
+        }.start()
     }
 
     private fun factory(ctx: Context): PeerConnectionFactory? {
@@ -59,19 +63,38 @@ object P2p {
         }
     }
 
+    /** Tipo de aparato, para el panel: Fire TV, Android TV / TV box o móvil (siempre dentro de la APK) */
+    private fun devKind(ctx: Context): String {
+        val amazon = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
+        val tv = try {
+            (ctx.getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager).currentModeType ==
+                android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        } catch (t: Throwable) {
+            false
+        }
+        return if (amazon) "firetv+apk" else if (tv) "androidtv+apk" else "android+apk"
+    }
+
     /** Entra en la sala del canal (sin bloquear la pantalla) */
     fun join(ctx: Context, channelId: String) {
-        if (!enabled) return
         val room = "ch-" + channelId
-        synchronized(lock) {
-            if (current?.room == room) return
-            current?.stop()
-            current = null
-        }
         Thread {
             try {
+                // La primera vez hay que esperar a saber si el P2P está encendido (antes se perdía el primer canal)
+                var w = 0
+                while (configAsked && !configDone && w < 30) {
+                    Thread.sleep(100)
+                    w++
+                }
+                if (!enabled) return@Thread
+                synchronized(lock) {
+                    if (current?.room == room) return@Thread
+                    current?.stop()
+                    current = null
+                }
                 val f = factory(ctx) ?: return@Thread
                 val s = Swarm(room, f)
+                s.dev = devKind(ctx)
                 synchronized(lock) {
                     current?.stop()
                     current = s
@@ -122,6 +145,12 @@ class Swarm(val room: String, private val factory: PeerConnectionFactory) {
     private val serve = Executors.newFixedThreadPool(2)
     @Volatile var p2pBytes = 0L
     @Volatile var httpBytes = 0L
+    @Volatile var upBytes = 0L
+    @Volatile var dev = "android+apk"
+    private var repP2p = 0L
+    private var repHttp = 0L
+    private var repUp = 0L
+    private var repAt = System.currentTimeMillis()
 
     private val ice: List<PeerConnection.IceServer> = listOf(
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
@@ -158,6 +187,17 @@ class Swarm(val room: String, private val factory: PeerConnectionFactory) {
 
     fun start() {
         Thread { loop() }.apply { isDaemon = true }.start()
+        // Cada 30 s se avisa al panel de cuánto vídeo vino de otros aparatos y cuánto del nodo
+        Thread {
+            while (!stopped) {
+                try {
+                    Thread.sleep(30000)
+                } catch (e: InterruptedException) {
+                    return@Thread
+                }
+                if (!stopped) report()
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     private fun loop() {
@@ -287,6 +327,26 @@ class Swarm(val room: String, private val factory: PeerConnectionFactory) {
         return null
     }
 
+    /** Informe al panel: lo que pasó desde el último aviso (silencioso: si falla, no pasa nada) */
+    fun report() {
+        val p = p2pBytes
+        val h = httpBytes
+        val u = upBytes
+        val dp = p - repP2p
+        val dh = h - repHttp
+        val du = u - repUp
+        if (dp + dh + du <= 0L) return
+        repP2p = p
+        repHttp = h
+        repUp = u
+        val now = System.currentTimeMillis()
+        val secs = ((now - repAt) / 1000).toInt()
+        repAt = now
+        val body = JSONObject().put("room", room).put("p2p", dp).put("http", dh).put("up", du)
+            .put("peers", peers.values.count { it.ready }).put("secs", secs).put("dev", dev)
+        http("POST", "/app-api/p2p/report", body)
+    }
+
     fun status(): String {
         val n = peers.values.count { it.ready }
         val total = p2pBytes + httpBytes
@@ -303,6 +363,7 @@ class Swarm(val room: String, private val factory: PeerConnectionFactory) {
         try {
             val id = myId
             if (id.isNotEmpty()) io.execute { http("POST", "/app-api/sig/leave", JSONObject().put("peer", id)) }
+            io.execute { report() }
             io.shutdown()
             serve.shutdown()
         } catch (e: Exception) {
@@ -482,13 +543,14 @@ class Swarm(val room: String, private val factory: PeerConnectionFactory) {
                 sendMsg(JSONObject().put("type", "nack").put("seg", seg).put("reqId", reqId))
                 return
             }
+            upBytes += b.size
             val b64 = Base64.encodeToString(b, Base64.NO_WRAP)
             val part = 32 * 1024
             val n = maxOf(1, (b64.length + part - 1) / part)
             for (i in 0 until n) {
                 sendMsg(
                     JSONObject().put("type", "data").put("seg", seg).put("reqId", reqId)
-                        .put("i", i).put("n", n)
+                        .put("i", i).put("n", n).put("size", b.size)
                         .put("chunk", b64.substring(i * part, minOf(b64.length, (i + 1) * part)))
                 )
             }
@@ -514,7 +576,10 @@ class Swarm(val room: String, private val factory: PeerConnectionFactory) {
             } catch (e: Exception) {
                 null
             }
-            pending.remove(reqId)?.finish(bytes)
+            // Si el otro aparato dijo cuánto medía y no coincide, se descarta y se pide al nodo
+            val want = m.optInt("size", -1)
+            val ok = bytes != null && (want < 0 || bytes.size == want)
+            pending.remove(reqId)?.finish(if (ok) bytes else null)
         }
 
         fun request(seg: String, timeoutMs: Long): ByteArray? {

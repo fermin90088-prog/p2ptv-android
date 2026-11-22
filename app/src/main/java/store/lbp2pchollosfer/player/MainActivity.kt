@@ -638,6 +638,13 @@ class MainActivity : AppCompatActivity() {
             // Canal elegido en la web: el reproductor de la app lo reproduce y cuenta como "viendo ahora"
             ui.removeCallbacks(pingRunner)
             ui.post(pingRunner)
+            // P2P también cuando el canal lo manda la web (Fire TV, TV box…). Las películas (id no numérico) no entran.
+            if (ch.id.isNotEmpty() && ch.id.all { it.isDigit() }) {
+                P2p.loadConfig()
+                P2p.join(applicationContext, ch.id)
+            } else {
+                P2p.leave()
+            }
             val asHls = ch.group == "hls" || attempt % 2 == 1
             val item = MediaItem.Builder()
                 .setUri(currentSourceUrl(ch))
