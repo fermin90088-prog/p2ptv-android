@@ -545,11 +545,17 @@ class MainActivity : AppCompatActivity() {
         val p2pFactory = DataSource.Factory { P2pDataSource(baseFactory.createDataSource()) }
         val sourceFactory = DefaultMediaSourceFactory(p2pFactory, extractors)
         // Empieza a reproducir con ~1 s de carga y sigue llenando por detrás
+        // Aparatos con poca memoria (Fire Stick Lite o HD, TV box básicos): colchón más pequeño para no quedarse sin memoria
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val lowRam = am.isLowRamDevice || am.memoryClass <= 128
         val lc = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15000, 40000, 1000, 2500)
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBufferDurationsMs(if (lowRam) 10000 else 15000, if (lowRam) 25000 else 40000, 1000, 2500)
+            .setTargetBufferBytes(if (lowRam) 24 * 1024 * 1024 else androidx.media3.common.C.LENGTH_UNSET)
+            .setPrioritizeTimeOverSizeThresholds(!lowRam)
             .build()
-        val p = ExoPlayer.Builder(this).setMediaSourceFactory(sourceFactory).setLoadControl(lc).build()
+        // Si el decodificador principal falla o no arranca, prueba con otro del aparato antes de rendirse
+        val renderers = androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true)
+        val p = ExoPlayer.Builder(this, renderers).setMediaSourceFactory(sourceFactory).setLoadControl(lc).build()
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
@@ -583,6 +589,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                reportPlayerError(error)
+                val decoder = error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ||
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+                // Si el aparato no sabe decodificar esta señal, repetirla no sirve: pasa ya a otra versión del canal
+                if (decoder && altSwitches < 6 && switchAlt()) return
                 retry()
             }
         })
@@ -638,6 +651,13 @@ class MainActivity : AppCompatActivity() {
             // Canal elegido en la web: el reproductor de la app lo reproduce y cuenta como "viendo ahora"
             ui.removeCallbacks(pingRunner)
             ui.post(pingRunner)
+            // P2P también cuando el canal lo manda la web (Fire TV, TV box…). Las películas (id no numérico) no entran.
+            if (ch.id.isNotEmpty() && ch.id.all { it.isDigit() }) {
+                P2p.loadConfig()
+                P2p.join(applicationContext, ch.id)
+            } else {
+                P2p.leave()
+            }
             val asHls = ch.group == "hls" || attempt % 2 == 1
             val item = MediaItem.Builder()
                 .setUri(currentSourceUrl(ch))
@@ -705,6 +725,34 @@ class MainActivity : AppCompatActivity() {
         showMsg("Cambiando a otra señal…")
         startPlayback()
         return true
+    }
+
+    /** Avisa al panel de por qué falló la reproducción y en qué aparato, para poder arreglarlo por tipo de aparato */
+    private fun reportPlayerError(error: PlaybackException) {
+        val tok = Api.token ?: return
+        val ch = channels.getOrNull(currentIndex)
+        val vf = player?.videoFormat
+        val text = "error=" + error.errorCodeName + " codec=" + (vf?.sampleMimeType ?: "?") + " " + (vf?.width ?: 0) + "x" + (vf?.height ?: 0) +
+            " causa=" + (error.cause?.javaClass?.simpleName ?: "?") + ": " + (error.cause?.message ?: error.message ?: "").take(160) +
+            "\ndispositivo=" + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + " android=" + android.os.Build.VERSION.SDK_INT +
+            "\nid=" + (ch?.id ?: "?") + " intento=" + attempt
+        val name = ch?.name ?: ""
+        Thread {
+            try {
+                val c = java.net.URL(Api.BASE + "/app-api/diag").openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "POST"
+                c.doOutput = true
+                c.connectTimeout = 5000
+                c.readTimeout = 5000
+                c.setRequestProperty("Content-Type", "application/json")
+                c.setRequestProperty("Authorization", "Bearer " + tok)
+                val body = org.json.JSONObject().put("channel", "[nativo] " + name).put("text", text)
+                c.outputStream.use { it.write(body.toString().toByteArray()) }
+                c.responseCode
+                c.disconnect()
+            } catch (e: Exception) {
+            }
+        }.start()
     }
 
     /** Avisa al servidor de que esta señal se cortó, para bajarla de posición en las listas */

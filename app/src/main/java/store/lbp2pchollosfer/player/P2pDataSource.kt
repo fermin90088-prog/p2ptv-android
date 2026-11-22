@@ -41,7 +41,7 @@ class P2pDataSource(private val upstream: DataSource) : DataSource {
             val k = path.split("/").takeLast(2).joinToString("/")
             swarm = sw
             key = k
-            val bytes = try { sw.fetch(k, 1200) } catch (t: Throwable) { null }
+            val bytes = try { sw.fetch(k, 700) } catch (t: Throwable) { null }
             if (bytes != null) {
                 mem = ByteArrayInputStream(bytes)
                 return bytes.size.toLong()
