@@ -660,9 +660,13 @@ class MainActivity : AppCompatActivity() {
             } else {
                 P2p.leave()
             }
-            val asHls = ch.group == "hls" || attempt % 2 == 1
+            // Los canales de nuestra pasarela (/app-api/live/) y los .ts directos son siempre TS: si fallan se reintentan
+            // como TS, no como lista HLS (eso nunca puede funcionar). Lo que pasa por /app-api/proxy es siempre HLS.
+            val src = currentSourceUrl(ch)
+            val tsOnly = src.contains("/app-api/live/") || src.substringBefore('?').endsWith(".ts")
+            val asHls = ch.group == "hls" || src.contains("/app-api/proxy") || (attempt % 2 == 1 && !tsOnly)
             val item = MediaItem.Builder()
-                .setUri(currentSourceUrl(ch))
+                .setUri(src)
                 .setMimeType(if (asHls) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
                 .build()
             p.setMediaItem(item)
